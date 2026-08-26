@@ -1,5 +1,6 @@
 import { UserModel } from '../models/user.model.js';
 import bcrypt from 'bcrypt';
+import { formatUserProfilePicture, uploadFileToS3 } from '../services/s3service.js';
 
 export const getUsers = async (req, res) => {
   try {
@@ -11,6 +12,16 @@ export const getUsers = async (req, res) => {
       status,
       search,
     });
+
+    if (result && result.users) {
+      result.users = await Promise.all(
+        result.users.map(async (user) => ({
+          ...user,
+          profilePicture: await formatUserProfilePicture(user.profilePicture),
+        }))
+      );
+    }
+
     res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Error al obtener usuarios', error: error.message });
@@ -24,6 +35,8 @@ export const getUserById = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
+    user.profilePicture = await formatUserProfilePicture(user.profilePicture);
+
     res.json(user);
   } catch (error) {
     res.status(500).json({ message: 'Error al obtener el usuario', error: error.message });
@@ -35,9 +48,16 @@ export const createUser = async (req, res) => {
     const { password, ...rest } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    let profilePictureUrl = null;
+
+    if (req.file) {
+      profilePictureUrl = await uploadFileToS3(req.file);
+    }
+
     const newUser = await UserModel.create({
       ...rest,
       password: hashedPassword,
+      profilePicture: profilePictureUrl,
     });
 
     res.status(201).json(newUser);
@@ -53,6 +73,13 @@ export const updateUser = async (req, res) => {
 
     if (userData.password) {
       userData.password = await bcrypt.hash(userData.password, 10);
+    }
+
+    let profilePictureUrl = null;
+
+    if (req.file) {
+      profilePictureUrl = await uploadFileToS3(req.file);
+      userData.profilePicture = profilePictureUrl;
     }
 
     const updatedUser = await UserModel.update(id, userData);
